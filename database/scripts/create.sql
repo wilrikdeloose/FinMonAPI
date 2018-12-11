@@ -1,78 +1,71 @@
-CREATE OR REPLACE TABLE bank (
-  ID int(11) AUTO_INCREMENT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS bank (
+  ID SERIAL PRIMARY KEY,
   description text NOT NULL
 );
 
-CREATE OR REPLACE TABLE people (
-  ID int(11) AUTO_INCREMENT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS people (
+  ID SERIAL PRIMARY KEY,
   name text NOT NULL
 );
 
-CREATE OR REPLACE TABLE account (
-  ID int(11) AUTO_INCREMENT PRIMARY KEY,
-  bankid int(11) NOT NULL REFERENCES bank(ID),
+CREATE TABLE IF NOT EXISTS account (
+  ID SERIAL PRIMARY KEY,
+  bankid integer NOT NULL REFERENCES bank(ID),
   accountNumber text NOT NULL
 );
 
-CREATE OR REPLACE TABLE account_people (
-  accountid int(11),
-  peopleid int(11),
+CREATE TABLE IF NOT EXISTS account_people (
+  accountid integer,
+  peopleid integer,
   PRIMARY KEY (accountid, peopleid)
 );
 
-CREATE OR REPLACE TABLE transactions (
-  ID int(11) AUTO_INCREMENT PRIMARY KEY,
-  accountid int(11) NOT NULL REFERENCES account(ID),
+CREATE TABLE IF NOT EXISTS transactions (
+  ID SERIAL PRIMARY KEY,
+  accountid integer NOT NULL REFERENCES account(ID),
   date timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   amount float NOT NULL,
-  description longtext
+  description text
 );
 
-CREATE OR REPLACE TABLE tags (
-  ID int(11) AUTO_INCREMENT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS tags (
+  ID SERIAL PRIMARY KEY,
   tag text NOT NULL,
   keyword text,
-  parentTagId int(11) REFERENCES tags(ID)
+  parentTagId integer REFERENCES tags(ID)
 );
 
-CREATE OR REPLACE TABLE transaction_tags (
-  transactionid int(11),
-  tagid int(11),
+CREATE TABLE IF NOT EXISTS transaction_tags (
+  transactionid integer,
+  tagid integer,
   PRIMARY KEY (transactionid, tagid)
 );
 
-DELIMITER //
-CREATE OR REPLACE PROCEDURE recursive_getAllSubTags(input_tagId int(11), OUT output_tagText text)
+CREATE OR REPLACE FUNCTION recursive_getAllSubTags(input_tagId integer, OUT output_tagText text) AS $$
+DECLARE
+  tagId integer;
+  parentId integer;
+  tagText text;
+  output_tag text;
 BEGIN
-  DECLARE tagId int(11);
-  DECLARE parentId int(11);
-  DECLARE tagText text;
-  DECLARE output_tag text;
-  
   SELECT ID, tag, parentTagId INTO tagId, tagText, parentId FROM tags WHERE ID = input_tagId;
   IF parentId IS NULL THEN
     SET output_tagText = tagText;
   ELSE
-    CALL recursive_getAllSubTags(parentId, output_tag);
+    SELECT recursive_getAllSubTags(parentId, output_tag);
     SELECT CONCAT(output_tag, ' > ', tagText) INTO output_tagText;
   END IF;
 END;
-//
-DELIMITER ;
+$$ LANGUAGE plpgsql;
 
-DELIMITER //
-CREATE OR REPLACE FUNCTION getAllSubTags(input_tagId int(11))
-RETURNS CHAR(100) DETERMINISTIC
+CREATE OR REPLACE FUNCTION getAllSubTags(input_tagId integer) RETURNS CHAR(100) AS $$
+DECLARE
+  tagText text;
 BEGIN
-  DECLARE tagText text;
-  
-  SET @@SESSION.max_sp_recursion_depth = 10;
-  CALL recursive_getAllSubTags(input_tagId, tagText);
-  
+  SELECT recursive_getAllSubTags(input_tagId, tagText);
   return tagText;
 END;
-//
-DELIMITER ;
+$$ LANGUAGE plpgsql;
 
 -- view that displays all transaction details of all accounts
 CREATE OR REPLACE VIEW transaction_details AS (
@@ -83,7 +76,7 @@ CREATE OR REPLACE VIEW transaction_details AS (
     a.bankid,
     b.description AS bank,
     t.date,
-    DATE_FORMAT(t.date, '%Y-%m') as month,
+    to_char(t.date, 'YYYY-MM') as month,
     t.amount,
     t.description,
     tag.tag,
@@ -96,42 +89,36 @@ CREATE OR REPLACE VIEW transaction_details AS (
     tags tag ON (tt.tagId = tag.ID)
 );
 
--- trigger that automatically searches for tags in newly inserted transactions.
-DELIMITER //
-CREATE OR REPLACE TRIGGER tagCheck
-AFTER INSERT ON transactions FOR EACH ROW
+CREATE OR REPLACE FUNCTION tagCheck() RETURNS trigger AS $$
+DECLARE
+  done INT := FALSE;
+  tagId INT;
+  keywordText CHAR(100);
+  keyword_cursor CURSOR FOR SELECT ID, keyword FROM tags;
 BEGIN
-  DECLARE done INT DEFAULT FALSE;
-  DECLARE tagId INT;
-  DECLARE keywordText CHAR(100);
-  DECLARE keyword_cursor CURSOR FOR SELECT ID, keyword FROM tags;
-  
-  -- declare NOT FOUND handler
-  DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
-  
   OPEN keyword_cursor;
   
-  keyword_loop: LOOP
+  LOOP
     FETCH keyword_cursor INTO tagId, keywordText;
-    IF done THEN
-      LEAVE keyword_loop;
-    END IF;
+    EXIT WHEN NOT FOUND;
     IF INSTR(LOWER(NEW.description), keywordText) > 0 THEN
       INSERT INTO transaction_tags (transactionid, tagid) VALUES (NEW.ID, tagId);
     END IF;
   END LOOP;
   
   CLOSE keyword_cursor;
-END
-//
-DELIMITER ;
+END;
+$$
+LANGUAGE 'plpgsql';
 
-DELIMITER //
-CREATE OR REPLACE FUNCTION getAmount(input_month text, input_tag text)
-RETURNS FLOAT DETERMINISTIC
+-- trigger that automatically searches for tags in newly inserted transactions.
+CREATE TRIGGER tagCheckTrigger AFTER INSERT OR UPDATE ON transactions FOR EACH ROW
+EXECUTE PROCEDURE tagCheck();
+
+CREATE OR REPLACE FUNCTION getAmount(input_month text, input_tag text) RETURNS FLOAT AS $$
+DECLARE
+  output_amount FLOAT;
 BEGIN
-  DECLARE output_amount FLOAT;
-  
   SELECT
     SUM(amount) INTO output_amount
   FROM
@@ -142,5 +129,4 @@ BEGIN
 
   RETURN output_amount;
 END;
-//
-DELIMITER ;
+$$ LANGUAGE plpgsql;

@@ -6,6 +6,11 @@ use App\User;
 
 class BankController extends Controller
 {
+    public function test()
+    {
+        return response()->json(['all' => 1], 200);
+    }
+
     /**
      * Retrieve the number of banks.
      *
@@ -16,7 +21,7 @@ class BankController extends Controller
         $result = app('db')->select("SELECT count(*) as numberOfBanks FROM bank");
         return response()->json(['banks' => $result[0]->numberOfBanks], 200);
     }
-
+    
     public function all()
     {
         try

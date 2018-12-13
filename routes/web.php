@@ -15,5 +15,6 @@ $router->get('/', function () use ($router) {
     return $router->app->version();
 });
 
+$router->get('/banks/test', 'BankController@test');
 $router->get('/banks/count', 'BankController@count');
 $router->get('/banks/all', 'BankController@all');
